@@ -46,7 +46,7 @@ void dispatch(const char *policy, linkedlist *head){
 }
 
 // TODO: figure out parameters and complete
-void FCFS (bool doesBlock) {
+void FCFS (linkedlist *head) {
     // if the process does not block, it will run until it finishes
     // If the process is to block, you must then decide how long it will 
     // run before blocking (again, using a random number generator).
