@@ -5,6 +5,9 @@
 
 #define MAXLENGTH 10
 
+
+
+
 /* reference for linked list struct and corresponding push/print functions: http://www.mahonri.info/SO/23279119_LinkedList_101.c*/
 
 // struct for keeping track of input data
@@ -12,6 +15,8 @@ typedef struct {
     char name[MAXLENGTH];
     int runtime;
     float probability;
+    bool blocked;
+    int blockruntime;
 }input_data; 
 
 // struct for linked list -> possibly ready queue? 
@@ -20,6 +25,12 @@ typedef struct {
     struct linkedlist *next;
 }linkedlist;
 
+
+
+int random_num(int min, int max){
+    int r = random() % max + min;
+    return r;
+}
 
 // TODO: create linked list I/O queue 
     // the next request to execute is the first one in the queue.
@@ -33,24 +44,6 @@ typedef struct {
 
 // TODO: create a structure to record information about the I/O device.
 
-// CPU dispatch routine
-// TODO: figure out parameters and complete 
-void dispatch(const char *policy, linkedlist *head){
-    linkedlist *current = head;
-    (void) srandom(12345);
-    printf("random num: %d\n", srandom); 
-    // 1. determine whether process is to block for I/O (and is to be transferred to the I/O queue):
-        // To do this, generate a random number between 0 and 1.
-        // Then compare it to the probability that the process will block
-        // If the number you generated is less than the input probability, the process blocks; otherwise not.
-}
-
-// TODO: figure out parameters and complete
-void FCFS (linkedlist *head) {
-    // if the process does not block, it will run until it finishes
-    // If the process is to block, you must then decide how long it will 
-    // run before blocking (again, using a random number generator).
-}
 
 // function for pushing input data into a linked list
 void push (linkedlist **head, input_data data){
@@ -92,9 +85,75 @@ int PrintList(linkedlist *head) {
     return(rCode);
    }
 
+// TODO: figure out parameters and complete
+void IOService(linkedlist **head, linkedlist* current){
+    int pause = random_num(1, 30);
+    printf("IO SERVICE: %d seconds\n", pause);
+    push(head, current->data); // append to end of the job ready list
+}
+
+
+void processFCFS (linkedlist *head) {
+    linkedlist *current = head;
+    printf("\nFCFS\n");
+    while(current){
+        printf("\nCURRENT PROCESS: %s\n", current->data.name);
+        int duration = 0;
+        bool block = ((float)rand()/RAND_MAX) < (current->data.probability); // check if process should block
+        
+        // if process has already been blocked, set duration to blockruntime
+        if (current->data.blocked){
+            printf("Already blocked\n");
+            duration = current->data.blockruntime;
+            block = false;
+        }
+        // if process hasn't been blocked but should be, update data struct 
+        else if (block){
+            printf("Process Blocked\n");
+            current->data.blocked = true;
+            duration = random_num(1, current->data.runtime);
+            current->data.blockruntime = current->data.runtime - duration;
+        }
+        // else just set duration to runtime
+        else duration = current->data.runtime;
+
+        // countdown for process runtime
+        while(duration) {
+            printf("PROCESS DURATION REMAINING: %d\n", duration);
+            // sleep(1)
+            duration--;
+        }
+
+        // if a process should be blocked, call IOservice which will handle updating the queue
+        if (block) IOService(&head, current);
+
+        // continue iterating through the job queue
+        current = current->next;
+    }
+}
+
+// CPU dispatch routine
+// TODO: figure out parameters and complete 
+void dispatch(const char *policy, linkedlist *head){
+    linkedlist *current = head;
+    // 1. determine whether process is to block for I/O (and is to be transferred to the I/O queue):
+        // To do this, generate a random number between 0 and 1.
+        // Then compare it to the probability that the process will block
+        // If the number you generated is less than the input probability, the process blocks; otherwise not.
+
+    if (!strcmp(policy, "-f")){
+        processFCFS(head);
+    }
+    else if (!strcmp(policy, "-r")){
+        exit(1);
+    }
+}
 
 
 int main( int argc, char *argv[] ) {
+    // random seed
+    (void) srandom(12345);
+
     // check that the arguments are right 
     if (argc != 3) {
         fprintf(stderr, "Usage: <scheduling policy> <file>\n");
@@ -152,10 +211,14 @@ int main( int argc, char *argv[] ) {
     // close file if not stdin
     if (fp != stdin) fclose (fp); 
 
+    // print node list
+    PrintList(head);
+    printf("\n\n");
+
     // run the CPU first and then the IO within each clock cycle
     // call CPU dispatch routine
     dispatch(argv[1], head);
                                    
-    PrintList(head);
+    
     return 0;
 }
