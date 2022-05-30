@@ -4,6 +4,8 @@
 #include <stdbool.h>
 
 #define MAXLENGTH 10
+#define IO_MAX_TIME 30
+#define MIN_TIME 1
 
 /*
 PROC *cpu; // points to process on cpu
@@ -43,9 +45,10 @@ void addtoqueue(QUEUE *q, PROC *p);     // implemented
 void printqueue(QUEUE *q);              // implemented
 void movetocpu(PROC *p);                // implemented
 void movetoio(PROC *p);                 // implemented
-void runfcfs();
-void runio();
-void run();
+void runio();                           // partly implemented *tested only with runfcfs()
+void runfcfs();                         // implemented
+void runrr();
+void run(char *flag);                   // implemented
 void rfile(char *fname);                // implemented
 
 int main(int argc, char *argv[])
@@ -62,6 +65,8 @@ int main(int argc, char *argv[])
 
     // open the file and load the process queue
     rfile(argv[2]);
+
+    run(argv[1]);
 
     return 0;
 }
@@ -89,7 +94,6 @@ void addtoqueue(QUEUE *q, PROC *p){
 }
 
 void printqueue(QUEUE *q){
-
     while (q){
         printf("\tNAME: %s RT: %d PROB: %.2f\n", q->data.name, q->data.runtime, q->data.probability);
         q = q->next;
@@ -104,6 +108,67 @@ void movetoio(PROC *p){
     addtoqueue(&io, p);
 }
 
+void runio(){
+    int pause = random() % IO_MAX_TIME + MIN_TIME;
+    printf("\nIO SERVICE: %d seconds\n", pause);  
+    movetocpu(&io.data);
+    if (io.next){
+        QUEUE * t = io.next;
+        io.data = t->data;
+        io.next = t->next;
+    }
+    else {
+        QUEUE p = {NULL, NULL};
+        io = p;
+    }
+    printf("IO QUEUE:\n");
+    printqueue(&io);
+}
+
+
+void runfcfs() {
+    printf("RUNNING FCFS\n");
+    QUEUE * q = &ready;
+
+    while (q){
+        printf("\nFCFS QUEUE:\n");
+        printqueue(q);
+        printf("PROCESS NAME: %s\n", q->data.name);
+        bool blocked = false;
+        int blockedtime = 0;
+        if (q->data.runtime > 3){
+            blocked = ((float)rand()/RAND_MAX < q->data.probability);
+        }
+
+        if (blocked){
+            blockedtime = random() % q->data.runtime + MIN_TIME;
+            printf("PROCESS BLOCKED, BT = %d\n", blockedtime);
+        }
+
+        int duration = q->data.runtime - blockedtime - 1;
+        q->data.runtime = q->data.runtime - duration;
+        while (duration >= 0){
+            printf("\t%d\n", duration);
+            duration--;
+        }
+        
+        if (blocked) {
+            
+            movetoio(&q->data);
+            runio();
+        }
+        q = q->next;
+        
+    }
+}
+void runrr(){
+    int i = 0;
+}
+
+void run(char *flag){
+    if (strcmp(flag, "-f") == 0) runfcfs();
+    else runrr();
+}
 
 void rfile(char *fname)
 {
@@ -159,13 +224,7 @@ void rfile(char *fname)
 
     if (fp != stdin) fclose (fp); 
 
-    //printqueue(&ready);
-
-    movetoio(&ready.data);
-    QUEUE * t = ready.next;
-    movetoio(&t->data);
-
-    printqueue(&io);
+    // printqueue(&ready);
 }
 
 
