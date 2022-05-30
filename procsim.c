@@ -3,24 +3,12 @@
 #include <string.h>
 #include <stdbool.h>
 
+
+// GLOBAL CONSTANTS
 #define MAXLENGTH 10
 #define IO_MAX_TIME 30
 #define MIN_TIME 1
-
-/*
-PROC *cpu; // points to process on cpu
-PROC *iodev; // points to process on io device
-QUEUE ready = { NULL, NULL }; // ready queue
-QUEUE io = { NULL, NULL }; // i/o queue
-PROC *palloc(char *nm, int rt, float pr);
-void addtoqueue(QUEUE *q, PROC *p);
-void movetocpu(PROC *p);
-void movetoiodev(PROC *p);
-void runfcfs(void);
-void runio(void);
-void run();
-void rfile(char *fname, FILE *fp);
-*/
+#define QUANTUM 5
 
 
 // STRUCTURES
@@ -89,6 +77,8 @@ void print_proc_stats(char *name, PROC_STATS stat); // implemented
 void print_cpu_stats();                             // implemented
 void print_io_stats();                              // implemented
 
+// HELPER FUNCTIONS
+bool max(int a, int b);                             // implemented
 
 int main(int argc, char *argv[])
 {
@@ -105,6 +95,7 @@ int main(int argc, char *argv[])
     // open the file and load the process queue
     rfile(argv[2]);
 
+    // run the sim
     run(argv[1]);
 
     return 0;
@@ -113,20 +104,23 @@ int main(int argc, char *argv[])
 
 // QUEUE FUNCTIONS
 bool empty(QUEUE *q){
+    // determines if queue is empty by checking the head's name
     return (strcmp(q->data.name, "") == 0);
 }
 
 void addtoqueue(QUEUE *q, PROC *p){
-    QUEUE *t;
-    t = (QUEUE *)malloc(sizeof(QUEUE));
-    t->data = *p;
-
+    // if queue is empty, init the head
     if (empty(q)){
         q->data = *p;
         q->next = NULL;
     }
     else {
+    // else, iterate to the end of the queue and add a new node
+        QUEUE *t;
+        t = (QUEUE *)malloc(sizeof(QUEUE));
+        t->data = *p;
         QUEUE * curr = q;
+
         while (curr->next){
             curr = curr->next;
         }
@@ -152,13 +146,18 @@ void movetoio(PROC *p){
 
 // RUN FUNCTIONS
 void runio(){
+    // determine pause and update relevant data entries
     int pause = (random() % IO_MAX_TIME + MIN_TIME) - 1;
     io.data.stats.iotime = io.data.stats.iotime + pause;
     CLOCK += pause;
     io_stats.calls++;
     //printf("\nIO SERVICE: %d seconds\n", pause);  
     io.data.stats.dispatches = io.data.stats.dispatches + 1;
-    movetocpu(&io.data);
+
+    // check if process needs to continue running then move to cpu
+    if (io.data.runtime > 0) movetocpu(&io.data);
+
+    // check if there is an io queue
     if (io.next){
         QUEUE * t = io.next;
         io.data = t->data;
@@ -183,10 +182,13 @@ void runfcfs() {
         //printf("PROCESS NAME: %s\n", q->data.name);
         bool blocked = false;
         int blockedtime = 0;
-        if (q->data.runtime > 3){
+
+        // check if runtime is greater than 2 and determines if process should block
+        if (q->data.runtime > 2){
             blocked = ((float)rand()/RAND_MAX < q->data.probability);
         }
 
+        // determine blocked time if process blocked
         if (blocked){
             blockedtime = random() % q->data.runtime + MIN_TIME;
             //printf("PROCESS BLOCKED, BT = %d\n", blockedtime);
@@ -196,26 +198,67 @@ void runfcfs() {
         CLOCK += duration;
         q->data.runtime = q->data.runtime - duration;
         //printf("RUN FOR %d SECONDS\n", duration);
-        while (duration >= 0){
-            //printf("\t%d\n", duration);
-            duration--;
-        }
+        while (duration >= 0) duration--;
+
         
+        // if process is done, print stats
         if (q->data.runtime == 0){
             print_proc_stats(q->data.name, q->data.stats);
         }
 
+        // if process blocked, move to io and run io
         if (blocked) {
             q->data.stats.timesblocked = q->data.stats.timesblocked + 1;
             movetoio(&q->data);
             runio();
         }
+
+        // continue iterating
         q = q->next;
         
     }
 }
 void runrr(){
-    int i = 0;
+    QUEUE * q = &ready;
+
+    while (q){
+        q->data.stats.dispatches = q->data.stats.dispatches + 1;
+        //printf("\nRR QUEUE:\n");
+        //printqueue(q);
+        //printf("PROCESS NAME: %s\n", q->data.name);
+        bool blocked = false;
+        int blockedtime = 0;
+        int duration = QUANTUM;
+        // check if runtime is greater than 2 and determines if process should block
+        if (q->data.runtime > 2){
+            blocked = ((float)rand()/RAND_MAX < q->data.probability);
+        }
+
+        // set duration to the min between duration and runtime
+        if (max(duration, q->data.runtime)) duration = q->data.runtime;
+
+        // update relevant variables with duration
+        CLOCK += duration;
+        q->data.runtime = q->data.runtime - duration;
+        while (duration >= 0) duration--;      
+
+        // check if runtime is done, then print stats
+        if (q->data.runtime == 0){
+            print_proc_stats(q->data.name, q->data.stats);
+        } 
+
+        // if there is io blocking, move to io and call the routine
+        if (blocked){
+            q->data.stats.timesblocked = q->data.stats.timesblocked + 1;
+            movetoio(&q->data);
+            runio();
+        }
+
+        // if the runtime isn't finished and the process isn't blocked, move to end of queue
+        if (q->data.runtime != 0 && !blocked) movetocpu(&q->data);
+
+        q = q->next;
+    }
 }
 
 void run(char *flag){
@@ -337,4 +380,10 @@ void print_io_stats(){
     printf("I/O device utilization: %.2f\n", ((float)io_stats.busy/(float)CLOCK));
     printf("Number of times I/O was started: %d\n", io_stats.calls);
     printf("Overall throughput %.2f\n", ((float)io_stats.calls/(float)CLOCK));
+}
+
+
+// HELPER FUNCTIONS
+bool max(int a, int b){
+    return (a > b) ? true : false;
 }
