@@ -50,13 +50,7 @@ typedef struct
 // GLOBAL VARIABLES
 QUEUE ready = {NULL, NULL};
 QUEUE io = {NULL, NULL};
-QUEUE * q_cpu = &ready;
-QUEUE * q_io = &io;
-
-PROC * proc = NULL;
-PROC * iodev = NULL;
-
-CPU_STATS cpu_stats = {0,0,0,0};
+CPU_STATS cpu = {0,0,0,0};
 IO_STATS io_stats = {0,0,0};
 int CLOCK = 0;
 char* PROC_HEADERS[] = {"Name", "CPU Time", "When Done", "# Dispatches", "Blocked for I/O", "I/O Time"};
@@ -99,10 +93,10 @@ int main(int argc, char *argv[])
     }
 
     // open the file and load the process queue
-    rfile("file1");
+    rfile(argv[2]);
 
     // run the sim
-    run("-f");
+    run(argv[1]);
 
     return 0;
 }
@@ -125,13 +119,12 @@ void addtoqueue(QUEUE *q, PROC *p){
         QUEUE *t;
         t = (QUEUE *)malloc(sizeof(QUEUE));
         t->data = *p;
-        t->next = NULL;
         QUEUE * curr = q;
-        
-        while (q->next){
-            q = q->next;
+
+        while (curr->next){
+            curr = curr->next;
         }
-        q->next = t;
+        curr->next = t;
     }
 }
 
@@ -152,7 +145,6 @@ void movetoio(PROC *p){
 
 
 // RUN FUNCTIONS
-/*
 void runio(){
     // determine pause and update relevant data entries
     int pause = (random() % IO_MAX_TIME + MIN_TIME) - 1;
@@ -163,7 +155,7 @@ void runio(){
     io.data.stats.dispatches = io.data.stats.dispatches + 1;
 
     // check if process needs to continue running then move to cpu
-    movetocpu(&io.data);
+    if (io.data.runtime > 0) movetocpu(&io.data);
 
     // check if there is an io queue
     if (io.next){
@@ -178,34 +170,22 @@ void runio(){
     //printf("IO QUEUE:\n");
     //printqueue(&io);
 }
-*/
 
-void runio(){
-        if (iodev){
-            printf("\tIO PROCESS NAME: %s, TIME REMAINING: %d\n", iodev->name, iodev->runtime);
-            if (iodev->runtime == 0){
-                printf("PROCESS %s FINISHED AT %d\n", iodev->name, CLOCK);
-            }
-        else iodev->runtime--;
-    }
-}
 
-/*
 void runfcfs() {
     QUEUE * q = &ready;
 
     while (q){
         q->data.stats.dispatches = q->data.stats.dispatches + 1;
         //printf("\nFCFS QUEUE:\n");
+        //printqueue(q);
         //printf("PROCESS NAME: %s\n", q->data.name);
-
-
         bool blocked = false;
         int blockedtime = 0;
 
         // check if runtime is greater than 2 and determines if process should block
         if (q->data.runtime > 2){
-            blocked = ((float)random()/RAND_MAX < q->data.probability);
+            blocked = ((float)rand()/RAND_MAX < q->data.probability);
         }
 
         // determine blocked time if process blocked
@@ -222,10 +202,8 @@ void runfcfs() {
 
         
         // if process is done, print stats
-        if (q->data.runtime <= 1){
+        if (q->data.runtime == 0){
             print_proc_stats(q->data.name, q->data.stats);
-            q = q->next;
-            continue;
         }
 
         // if process blocked, move to io and run io
@@ -240,19 +218,6 @@ void runfcfs() {
         
     }
 }
-*/
-void runfcfs() {
-    if (proc){
-        printf("\tPROCESS NAME: %s, TIME REMAINING: %d\n", proc->name, proc->runtime);
-        if (proc->runtime-1 == 0){
-            printf("PROCESS %s FINISHED AT %d\n", proc->name, CLOCK);
-            proc = NULL;
-            q_cpu = q_cpu->next;
-        }
-        else proc->runtime--;
-    }
-}
-
 void runrr(){
     QUEUE * q = &ready;
 
@@ -303,64 +268,7 @@ void run(char *flag){
     }
     printf("\n");
 
-
-    bool blocked = false;
-    int blockedtime = 0;
-    int ioservice = 0;
-    int prevtime = 0;
-    if (strcmp(flag, "-f") == 0) {
-        while (q_cpu || q_io){
-            CLOCK++;
-            printf("===TICK %d===\n", CLOCK);
-            printqueue(&ready);
-            printf("\n");
-            printqueue(&io);
-
-            if (q_cpu && !proc) {
-                proc = &q_cpu->data;
-                if (proc) {
-                    if (proc->runtime > 2){
-                        float blockprob = (float)random()/RAND_MAX;
-                        blocked = (blockprob < proc->probability);
-                        blockedtime = random() % proc->runtime + MIN_TIME;
-                        blockedtime = proc->runtime - blockedtime + 1;
-                    }
-                }
-            }
-            
-            runfcfs();
-            if (proc) {
-                if (proc->runtime == blockedtime && blocked) {
-                    printf("PROCESS BLOCKING\n");
-                    movetoio(proc);
-                    proc = NULL;
-                    q_cpu = q_cpu->next;
-                }
-            }
-            
-            if (q_io && !iodev) {
-                iodev = &q_io->data;
-                ioservice = (random() % IO_MAX_TIME + MIN_TIME) - 1;
-                prevtime = iodev->runtime;
-                iodev->runtime = ioservice;
-            }
-
-            runio();
-
-            if (iodev) {
-                if (iodev->runtime == 0){
-                    iodev->runtime = prevtime;
-                    movetocpu(iodev);
-                    iodev = NULL;
-                    q_io = q_io->next;
-                }
-            }
-            //break;
-        }
-
-
-    }
-    /*
+    if (strcmp(flag, "-f") == 0) runfcfs();
     else runrr();
 
     printf("\nSystem:\n");
@@ -371,7 +279,6 @@ void run(char *flag){
 
     printf("\nIO:\n");
     print_io_stats();
-    */
 }
 
 
@@ -432,7 +339,7 @@ void rfile(char *fname)
         count++;
         // printf ("%s %d %.2f\n", data_ptr->name, data_ptr->runtime, data_ptr->probability);
     }
-    cpu_stats.processes = count;
+    cpu.processes = count;
     if (fp != stdin) fclose (fp); 
 
     // printqueue(&ready);
@@ -451,20 +358,20 @@ void print_proc_stats(char *name, PROC_STATS stats){
     printf("%*d\t", (int)strlen(PROC_HEADERS[5]), stats.iotime);
     printf("\n\n");
     
-    cpu_stats.dispatches += stats.dispatches;
-    cpu_stats.busy += stats.cputime;
-    cpu_stats.idle += stats.iotime;
+    cpu.dispatches += stats.dispatches;
+    cpu.busy += stats.cputime;
+    cpu.idle += stats.iotime;
 
     io_stats.busy += stats.iotime;
     io_stats.idle += stats.cputime;
 }
 
 void print_cpu_stats(){
-    printf("Total time spent busy: %d\n", cpu_stats.busy);
-    printf("Total time spent idle: %d\n", cpu_stats.idle);
-    printf("CPU utilization: %.2f\n", ((float)cpu_stats.busy/(float)CLOCK));
-    printf("Number of Dispatches: %d\n", cpu_stats.dispatches);
-    printf("Overall throughput: %.2f\n", ((float)cpu_stats.processes)/((float)CLOCK));
+    printf("Total time spent busy: %d\n", cpu.busy);
+    printf("Total time spent idle: %d\n", cpu.idle);
+    printf("CPU utilization: %.2f\n", ((float)cpu.busy/(float)CLOCK));
+    printf("Number of Dispatches: %d\n", cpu.dispatches);
+    printf("Overall throughput: %.2f\n", ((float)cpu.processes)/((float)CLOCK));
 }
 
 void print_io_stats(){
