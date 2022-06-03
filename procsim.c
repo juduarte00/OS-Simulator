@@ -37,21 +37,34 @@ typedef struct
     char name[MAXLENGTH];
     int runtime;
     float probability;
+    int remainingtime;
     PROC_STATS stats;
 } PROC;
 
-typedef struct
-{
-    PROC data;
-    struct QUEUE *next;
-} QUEUE;
+// typedef struct
+// {
+//     PROC data;
+//     struct QUEUE *next;
+// } QUEUE;
 
+struct node {
+    PROC* value;
+    struct node* next;
+};
+
+struct queue {
+    int count;
+    struct node* head;
+    struct node* back;
+};
+
+typedef struct queue* QUEUE;
 
 // GLOBAL VARIABLES
-QUEUE ready = {NULL, NULL};
-QUEUE io = {NULL, NULL};
-QUEUE * q_cpu = &ready;
-QUEUE * q_io = &io;
+QUEUE ready = NULL;
+QUEUE io = NULL;
+QUEUE * q_cpu = NULL;
+QUEUE * q_io = NULL;
 
 PROC * proc = NULL;
 PROC * iodev = NULL;
@@ -61,11 +74,15 @@ IO_STATS io_stats = {0,0,0};
 int CLOCK = 0;
 char* PROC_HEADERS[] = {"Name", "CPU Time", "When Done", "# Dispatches", "Blocked for I/O", "I/O Time"};
 
-
 // QUEUE FUNCTIONS
-bool empty(QUEUE *q);                               // implemented
-void addtoqueue(QUEUE *q, PROC *p);                 // implemented
-void printqueue(QUEUE *q);                          // implemented
+QUEUE queue_create(void);
+int queue_destroy(QUEUE queue);
+int queue_enqueue(QUEUE queue, void *data);
+int queue_dequeue(QUEUE queue, void **data);
+int queue_delete(QUEUE queue, void *data);
+typedef int (*queue_func_t)(QUEUE queue, void *data, void *arg);
+int queue_iterate(QUEUE queue, queue_func_t func, void *arg, void **data);
+int queue_length(QUEUE queue);
 void movetocpu(PROC *p);                            // implemented
 void movetoio(PROC *p);                             // implemented
 
@@ -85,11 +102,17 @@ void print_io_stats();                              // implemented
 
 // HELPER FUNCTIONS
 bool max(int a, int b);                             // implemented
+void initQueues(void);
+
+
 
 int main(int argc, char *argv[])
 {
     // random seed
     (void)srandom(12345);
+
+    // initialize queues
+    initQueues();
 
     // check that the arguments are right
     if (argc != 3)
@@ -99,7 +122,7 @@ int main(int argc, char *argv[])
     }
 
     // open the file and load the process queue
-    rfile("file1");
+    rfile("file2");
 
     // run the sim
     run("-f");
@@ -109,45 +132,169 @@ int main(int argc, char *argv[])
 
 
 // QUEUE FUNCTIONS
-bool empty(QUEUE *q){
-    // determines if queue is empty by checking the head's name
-    return (strcmp(q->data.name, "") == 0);
-}
 
-void addtoqueue(QUEUE *q, PROC *p){
-    // if queue is empty, init the head
-    if (empty(q)){
-        q->data = *p;
-        q->next = NULL;
+QUEUE queue_create(void) {
+    // Initialize queue by setting up the head/tail and start counting number elements
+    struct queue* newQueue = (struct queue*)malloc(sizeof(struct queue));
+    // if(newQueue == NULL)
+    // return NULL;
+    newQueue->head = NULL;
+    newQueue->back = NULL;
+    newQueue->count = 0;
+    return newQueue;
+}
+int queue_destroy(QUEUE queue) {
+    // Confirm whether the queue is empty before deletion
+    if (queue->head == NULL && queue->back == NULL) {
+        free(queue);
+        return 0;
     }
-    else {
-    // else, iterate to the end of the queue and add a new node
-        QUEUE *t;
-        t = (QUEUE *)malloc(sizeof(QUEUE));
-        t->data = *p;
-        t->next = NULL;
-        QUEUE * curr = q;
-        
-        while (q->next){
-            q = q->next;
+    return -1;
+}
+int queue_enqueue(QUEUE queue, void *data) {
+    struct node* newNode;
+    PROC* newVal;
+    if(queue == NULL || data == NULL)
+        return -1;
+
+    newVal= data;
+    newNode = (struct node*)malloc(sizeof(struct node));
+    if(newNode == NULL)
+        return -1;
+    newNode->next = NULL;
+    newNode->value = newVal;
+    // If the queue is empty, the enqueued value becomes the head
+    if(queue->head == NULL) {
+        queue->head = newNode;
+        queue->back = newNode;
+        queue->count++;
+    } else { // Else, the new value is added to the end of the queue to implement FIFO
+        queue->back->next = newNode;
+        queue->back = queue->back->next;
+        queue->count++;
+    }
+    printf("enqueue count: %d\n", queue->count);
+    return 0;
+}
+int queue_dequeue(QUEUE queue, void **data) {
+    if(queue == NULL || queue->count == 0 || data == NULL)
+        return -1;
+    // If there is only one element in the queue, then dequeue it and ensure bothhead and back are null
+    if(queue->head == queue->back) {
+        *data = queue->head->value;
+        queue->head = NULL;
+        queue->back = NULL;
+        queue->count--;
+    }
+    else { // Else, take remove the value of the head and shift the head to the next node
+        *data = queue->head->value;
+        queue->head = queue->head->next;
+        queue->count--;
+    }
+    return 0;
+}
+int queue_delete(QUEUE queue, void* data) {
+    if(queue == NULL || data == NULL)
+        return -1;
+    struct node* currentNode = queue->head;
+    // If the beginning of the queue is the item to delete, reassign head
+    if(currentNode->value == data) {
+        queue->head = queue->head->next;
+        free(currentNode);
+        queue->count--;
+        return 0;
+    }
+    else { // Else check whether the next nodes match
+        while(currentNode->next != NULL) {
+            if(currentNode->next->value == data) {
+                currentNode->next = currentNode->next->next;
+                queue->count--;
+                currentNode = NULL;
+                free(currentNode);
+                return 0;
+            } else {
+                // Check whether to keep going through the queue
+                if(currentNode->next->next != NULL) 
+                    currentNode = currentNode->next;
+                else 
+                    break;
+            }
         }
-        q->next = t;
     }
+    currentNode = NULL;
+    free(currentNode);
+    return -1;
+}
+int queue_iterate(QUEUE queue, queue_func_t func, void* arg, void** data) {
+    if(queue == NULL || func == NULL || queue->head == NULL)
+        return -1;
+    struct node* currentNode = queue->head;
+    struct node* nextNode = queue->head->next;
+    // Run the function on the head; if a 1 is returned (TRUE), then data should not be null
+    // Store returned value in data
+    if(func(queue, currentNode->value, arg)) {
+        if(data != NULL) {
+            *data = currentNode->value;
+            //printf("data: ", data->value.runtime);
+            return 0;
+        }
+    }
+    // Check if there is more than one node present in your queue 
+    if(nextNode == NULL) 
+            return 0;
+        
+    currentNode = nextNode;
+    nextNode = nextNode->next;
+    while (currentNode != NULL) {
+        if (func(queue, currentNode->value, arg)) {
+            if (data != NULL) {
+            *data = currentNode->value;
+            return 0;
+            }
+        }
+    // Reassign current node if it was deleted
+    if(currentNode->value == NULL) {
+        currentNode = nextNode;
+        nextNode = nextNode->next;
+    }
+    currentNode = currentNode->next;
+    if(nextNode->next != NULL)
+        nextNode = nextNode->next;
+    }
+    return 0;
 }
 
-void printqueue(QUEUE *q){
-    while (q){
-        printf("\tNAME: %s RT: %d PROB: %.2f\n", q->data.name, q->data.runtime, q->data.probability);
-        q = q->next;
-    }
+int queue_length(QUEUE queue) {
+    if (queue == NULL)
+        return -1;
+    return queue->count;
 }
+
+int printqueue(QUEUE queue){
+    if (queue->head == NULL) {
+        printf("queue is empty\n"); 
+        return -1;
+    }
+    struct node* currentNode = queue->head;
+    struct node* nextNode = queue->head->next;
+    for (int i = 0; i < queue->count; i++){
+        printf("\tNAME: %s RT: %d PROB: %.2f\n", currentNode->value->name, currentNode->value->runtime, currentNode->value->probability);
+        if (i != queue->count - 1) {
+            currentNode = nextNode;
+            nextNode = nextNode->next;
+        }
+    
+    }
+    return 0; 
+}
+
 
 void movetocpu(PROC *p){
-    addtoqueue(&ready, p);
+    queue_enqueue(ready, p);
 }
 
 void movetoio(PROC *p){
-    addtoqueue(&io, p);
+    queue_enqueue(io, p);
 }
 
 
@@ -179,6 +326,7 @@ void runio(){
     //printqueue(&io);
 }
 */
+
 
 void runio(){
         if (iodev){
@@ -241,60 +389,65 @@ void runfcfs() {
     }
 }
 */
+
+
 void runfcfs() {
     if (proc){
-        printf("\tPROCESS NAME: %s, TIME REMAINING: %d\n", proc->name, proc->runtime);
-        if (proc->runtime-1 == 0){
+        printf("\tIN FCFS PROCESS NAME: %s, TIME REMAINING: %d\n", proc->name, proc->remainingtime);
+        if (proc->remainingtime-1 == 0){
             printf("PROCESS %s FINISHED AT %d\n", proc->name, CLOCK);
             proc = NULL;
-            q_cpu = q_cpu->next;
+            q_cpu = (*q_cpu)->head->next;
         }
-        else proc->runtime--;
+        else 
+            proc->remainingtime--;
+        
+        printf("exiting process with remaining time %d \n", proc->remainingtime);
     }
 }
 
-void runrr(){
-    QUEUE * q = &ready;
+// void runrr(){
+//     QUEUE * q = &ready;
 
-    while (q){
-        q->data.stats.dispatches = q->data.stats.dispatches + 1;
-        //printf("\nRR QUEUE:\n");
-        //printqueue(q);
-        //printf("PROCESS NAME: %s\n", q->data.name);
-        bool blocked = false;
-        int blockedtime = 0;
-        int duration = QUANTUM;
-        // check if runtime is greater than 2 and determines if process should block
-        if (q->data.runtime > 2){
-            blocked = ((float)rand()/RAND_MAX < q->data.probability);
-        }
+//     while (q){
+//         q->data.stats.dispatches = q->data.stats.dispatches + 1;
+//         //printf("\nRR QUEUE:\n");
+//         //printqueue(q);
+//         //printf("PROCESS NAME: %s\n", q->data.name);
+//         bool blocked = false;
+//         int blockedtime = 0;
+//         int duration = QUANTUM;
+//         // check if runtime is greater than 2 and determines if process should block
+//         if (q->data.runtime > 2){
+//             blocked = ((float)rand()/RAND_MAX < q->data.probability);
+//         }
 
-        // set duration to the min between duration and runtime
-        if (max(duration, q->data.runtime)) duration = q->data.runtime;
+//         // set duration to the min between duration and runtime
+//         if (max(duration, q->data.runtime)) duration = q->data.runtime;
 
-        // update relevant variables with duration
-        CLOCK += duration;
-        q->data.runtime = q->data.runtime - duration;
-        while (duration >= 0) duration--;      
+//         // update relevant variables with duration
+//         CLOCK += duration;
+//         q->data.runtime = q->data.runtime - duration;
+//         while (duration >= 0) duration--;      
 
-        // check if runtime is done, then print stats
-        if (q->data.runtime == 0){
-            print_proc_stats(q->data.name, q->data.stats);
-        } 
+//         // check if runtime is done, then print stats
+//         if (q->data.runtime == 0){
+//             print_proc_stats(q->data.name, q->data.stats);
+//         } 
 
-        // if there is io blocking, move to io and call the routine
-        if (blocked){
-            q->data.stats.timesblocked = q->data.stats.timesblocked + 1;
-            movetoio(&q->data);
-            runio();
-        }
+//         // if there is io blocking, move to io and call the routine
+//         if (blocked){
+//             q->data.stats.timesblocked = q->data.stats.timesblocked + 1;
+//             movetoio(&q->data);
+//             runio();
+//         }
 
-        // if the runtime isn't finished and the process isn't blocked, move to end of queue
-        if (q->data.runtime != 0 && !blocked) movetocpu(&q->data);
+//         // if the runtime isn't finished and the process isn't blocked, move to end of queue
+//         if (q->data.runtime != 0 && !blocked) movetocpu(&q->data);
 
-        q = q->next;
-    }
-}
+//         q = q->next;
+//     }
+// }
 
 void run(char *flag){
     printf("Processes:\n");
@@ -303,6 +456,7 @@ void run(char *flag){
     }
     printf("\n");
 
+    printf("get to run");
 
     bool blocked = false;
     int blockedtime = 0;
@@ -312,66 +466,75 @@ void run(char *flag){
         while (q_cpu || q_io){
             CLOCK++;
             printf("===TICK %d===\n", CLOCK);
-            printqueue(&ready);
+            printf("printing ready queue: \n");
+            printqueue(ready);
             printf("\n");
-            printqueue(&io);
+            printf("printing io queue: \n");
+            printqueue(io);
+
+
 
             if (q_cpu && !proc) {
-                proc = &q_cpu->data;
+                proc = (*q_cpu)->head->value;
+                //printf("process: %s\n", proc->name);
                 if (proc) {
                     if (proc->runtime > 2){
                         float blockprob = (float)random()/RAND_MAX;
+                        printf("block probability value used: %f\n", blockprob);
                         blocked = (blockprob < proc->probability);
                         blockedtime = random() % proc->runtime + MIN_TIME;
+                        printf("block time value used: %d\n", blockedtime);
                         blockedtime = proc->runtime - blockedtime + 1;
                     }
                 }
             }
-            
+
             runfcfs();
+
             if (proc) {
-                if (proc->runtime == blockedtime && blocked) {
+                if (proc->remainingtime == blockedtime && blocked) {
                     printf("PROCESS BLOCKING\n");
                     movetoio(proc);
                     proc = NULL;
-                    q_cpu = q_cpu->next;
+                    q_cpu = (*q_cpu)->head->next;
                 }
             }
             
-            if (q_io && !iodev) {
-                iodev = &q_io->data;
-                ioservice = (random() % IO_MAX_TIME + MIN_TIME) - 1;
-                prevtime = iodev->runtime;
-                iodev->runtime = ioservice;
-            }
+            // if (q_io && !iodev) {
+            //     iodev = (*q_io)->head->value;
+            //     ioservice = (random() % IO_MAX_TIME + MIN_TIME) - 1;
+            //     prevtime = iodev->runtime;
+            //     iodev->runtime = ioservice;
+            // }
 
-            runio();
+            // runio();
 
-            if (iodev) {
-                if (iodev->runtime == 0){
-                    iodev->runtime = prevtime;
-                    movetocpu(iodev);
-                    iodev = NULL;
-                    q_io = q_io->next;
-                }
-            }
+            // if (iodev) {
+            //     if (iodev->runtime == 0){
+            //         iodev->runtime = prevtime;
+            //         movetocpu(iodev);
+            //         iodev = NULL;
+            //         q_io = (*q_io)->head->next;
+            //     }
+            // }
+
             //break;
         }
 
 
     }
-    /*
-    else runrr();
+    
+    // else runrr();
 
-    printf("\nSystem:\n");
-    printf("The wall clock time at which the simulation finished: %d\n", CLOCK);
+    // printf("\nSystem:\n");
+    // printf("The wall clock time at which the simulation finished: %d\n", CLOCK);
 
-    printf("\nCPU:\n");
-    print_cpu_stats();
+    // printf("\nCPU:\n");
+    // print_cpu_stats();
 
-    printf("\nIO:\n");
-    print_io_stats();
-    */
+    // printf("\nIO:\n");
+    // print_io_stats();
+    
 }
 
 
@@ -413,6 +576,7 @@ void rfile(char *fname)
         }
 
         tmp_proc.stats.cputime = tmp_proc.runtime;
+        tmp_proc.remainingtime = tmp_proc.runtime;
 
         // allocate actual node
         PROC *data_ptr = malloc(sizeof *data_ptr);
@@ -427,15 +591,17 @@ void rfile(char *fname)
         // assign temporary data to the actual node
         *data_ptr = tmp_proc;
 
-        // add to linked list
-        addtoqueue(&ready, data_ptr);
+        // add to ready queue
+        queue_enqueue(ready, data_ptr);
         count++;
-        // printf ("%s %d %.2f\n", data_ptr->name, data_ptr->runtime, data_ptr->probability);
+        //printf ("%s %d %.2f\n", data_ptr->name, data_ptr->runtime, data_ptr->probability);
     }
     cpu_stats.processes = count;
     if (fp != stdin) fclose (fp); 
-
-    // printqueue(&ready);
+    printf("printing from read: \n");
+    printqueue(ready);
+    // printf("what\n "); 
+    // printqueue(io);
 }
 
 
@@ -479,4 +645,13 @@ void print_io_stats(){
 // HELPER FUNCTIONS
 bool max(int a, int b){
     return (a > b) ? true : false;
+}
+
+void initQueues(void){
+    ready = queue_create();
+    io = queue_create();
+    q_cpu = queue_create();
+    q_io = queue_create();
+    q_cpu = &ready;
+    q_io = &io;
 }
