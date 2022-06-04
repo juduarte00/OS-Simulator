@@ -63,8 +63,8 @@ typedef struct queue* QUEUE;
 // GLOBAL VARIABLES
 QUEUE ready = NULL;
 QUEUE io = NULL;
-QUEUE * q_cpu = NULL;
-QUEUE * q_io = NULL;
+QUEUE q_cpu = NULL;
+QUEUE q_io = NULL;
 
 PROC * proc = NULL;
 PROC * iodev = NULL;
@@ -173,7 +173,7 @@ int queue_enqueue(QUEUE queue, void *data) {
         queue->back = queue->back->next;
         queue->count++;
     }
-    printf("enqueue count: %d\n", queue->count);
+    //printf("enqueue count: %d\n", queue->count);
     return 0;
 }
 int queue_dequeue(QUEUE queue, void **data) {
@@ -272,13 +272,13 @@ int queue_length(QUEUE queue) {
 
 int printqueue(QUEUE queue){
     if (queue->head == NULL) {
-        printf("queue is empty\n"); 
+        printf("\tqueue is empty\n"); 
         return -1;
     }
     struct node* currentNode = queue->head;
     struct node* nextNode = queue->head->next;
     for (int i = 0; i < queue->count; i++){
-        printf("\tNAME: %s RT: %d PROB: %.2f\n", currentNode->value->name, currentNode->value->runtime, currentNode->value->probability);
+        printf("\tNAME: %s RT: %d PROB: %.2f REMAINING: %d\n", currentNode->value->name, currentNode->value->runtime, currentNode->value->probability, currentNode->value->remainingtime);
         if (i != queue->count - 1) {
             currentNode = nextNode;
             nextNode = nextNode->next;
@@ -290,11 +290,15 @@ int printqueue(QUEUE queue){
 
 
 void movetocpu(PROC *p){
-    queue_enqueue(ready, p);
+    printf("MOVING PROCESSS %s TO CPU\n", p->name);
+    queue_enqueue(q_cpu, p);
+    queue_delete(ready, p);
 }
 
 void movetoio(PROC *p){
+    printf("MOVING PROCESSS %s TO IO\n", p->name);
     queue_enqueue(io, p);
+    queue_delete(q_cpu, p);
 }
 
 
@@ -329,12 +333,17 @@ void runio(){
 
 
 void runio(){
-        if (iodev){
-            printf("\tIO PROCESS NAME: %s, TIME REMAINING: %d\n", iodev->name, iodev->runtime);
-            if (iodev->runtime == 0){
-                printf("PROCESS %s FINISHED AT %d\n", iodev->name, CLOCK);
-            }
-        else iodev->runtime--;
+    if (!iodev && !q_io){
+        printf("VIEW: both I/O device and I/O queue empty; leaving function for I/O queue");
+        return;
+    }
+    if (iodev){
+        printf("\tIO PROCESS NAME: %s, TIME REMAINING: %d\n", iodev->name, iodev->remainingtime);
+        if (iodev->remainingtime == 0){
+            printf("PROCESS %s FINISHED AT %d\n", iodev->name, CLOCK);
+        } else {
+            iodev->remainingtime--;
+        }
     }
 }
 
@@ -396,13 +405,14 @@ void runfcfs() {
         printf("\tIN FCFS PROCESS NAME: %s, TIME REMAINING: %d\n", proc->name, proc->remainingtime);
         if (proc->remainingtime-1 == 0){
             printf("PROCESS %s FINISHED AT %d\n", proc->name, CLOCK);
+            queue_dequeue(q_cpu, proc);
             proc = NULL;
-            q_cpu = (*q_cpu)->head->next;
+            // q_cpu = (*q_cpu)->head->next;
         }
         else 
             proc->remainingtime--;
         
-        printf("exiting process with remaining time %d \n", proc->remainingtime);
+        printf("%s process with remaining time %d \n", proc->name, proc->remainingtime);
     }
 }
 
@@ -456,8 +466,6 @@ void run(char *flag){
     }
     printf("\n");
 
-    printf("get to run");
-
     bool blocked = false;
     int blockedtime = 0;
     int ioservice = 0;
@@ -472,10 +480,15 @@ void run(char *flag){
             printf("printing io queue: \n");
             printqueue(io);
 
-
-
-            if (q_cpu && !proc) {
-                proc = (*q_cpu)->head->value;
+            bool firstload = false;
+            // RUN READY QUEUE
+            if (q_cpu->head == NULL && !proc) {
+                proc = ready->head->value;
+                movetocpu(proc);
+                printf("printing cpu queue: \n");
+                printqueue(q_cpu);
+                proc = q_cpu->head->value;
+                firstload = true;
                 //printf("process: %s\n", proc->name);
                 if (proc) {
                     if (proc->runtime > 2){
@@ -489,36 +502,44 @@ void run(char *flag){
                 }
             }
 
-            runfcfs();
+            if (!firstload)
+                runfcfs();
 
+            bool sametick = false;
             if (proc) {
                 if (proc->remainingtime == blockedtime && blocked) {
                     printf("PROCESS BLOCKING\n");
                     movetoio(proc);
                     proc = NULL;
-                    q_cpu = (*q_cpu)->head->next;
+                    sametick = true; 
+                    //q_cpu = (*q_cpu)->head->next;
                 }
             }
             
-            // if (q_io && !iodev) {
-            //     iodev = (*q_io)->head->value;
-            //     ioservice = (random() % IO_MAX_TIME + MIN_TIME) - 1;
-            //     prevtime = iodev->runtime;
-            //     iodev->runtime = ioservice;
-            // }
+            // RUN IO QUEUE
+            if (q_io->head != NULL && !iodev) {
+                iodev = q_io->head->value;
+                ioservice = (random() % (iodev->runtime - MIN_TIME + 1)) + MIN_TIME;
+                //ioservice = (random() % (IO_MAX_TIME - MIN_TIME + 1)) + MIN_TIME;
+                printf("io service time: %d \n", ioservice);
+                prevtime = iodev->runtime;
+                iodev->runtime = ioservice;
+            }
 
-            // runio();
+            //if (!sametick)   
+                runio();
 
-            // if (iodev) {
-            //     if (iodev->runtime == 0){
-            //         iodev->runtime = prevtime;
-            //         movetocpu(iodev);
-            //         iodev = NULL;
-            //         q_io = (*q_io)->head->next;
-            //     }
-            // }
+            if (iodev) {
+                if (iodev->remainingtime == 0){
+                    iodev->remainingtime = prevtime;
+                    movetocpu(iodev);
+                    iodev = NULL;
 
-            //break;
+                    //q_io = q_io->head->next;
+                }
+            }
+
+            // break;
         }
 
 
@@ -579,7 +600,7 @@ void rfile(char *fname)
         tmp_proc.remainingtime = tmp_proc.runtime;
 
         // allocate actual node
-        PROC *data_ptr = malloc(sizeof *data_ptr);
+        PROC *data_ptr = malloc(sizeof (*data_ptr));
 
         // make sure it works
         if (!data_ptr)
@@ -652,6 +673,6 @@ void initQueues(void){
     io = queue_create();
     q_cpu = queue_create();
     q_io = queue_create();
-    q_cpu = &ready;
-    q_io = &io;
+    //q_cpu = &ready;
+    //q_io = &io;
 }
