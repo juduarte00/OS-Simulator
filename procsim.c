@@ -38,6 +38,7 @@ typedef struct
     int runtime;
     float probability;
     int remainingtime;
+    int iotime;
     PROC_STATS stats;
 } PROC;
 
@@ -334,26 +335,21 @@ void runio(){
 
 
 void runio(){
-    
     if (!iodev && !q_io){
-        printf("VIEW: both I/O device and I/O queue empty; leaving function for I/O queue");
+        printf("VIEW: both I/O device and I/O queue empty; leaving function for I/O queue\n");
         return;
     }
 
-    // if (!iodev){
-    //     if (q_io->head != NULL) {
-    //         iodev = q_io->head->value;
-    //     }
-    // }
-
     if (iodev){
-        printf("\tIO PROCESS NAME: %s, TIME REMAINING: %d\n", iodev->name, iodev->remainingtime);
-        if (iodev->remainingtime == 0){
+        if (iodev->iotime == 0){
             printf("PROCESS %s FINISHED AT %d\n", iodev->name, CLOCK);
+            queue_delete(q_io, iodev);
+            iodev = NULL;
             //queue_enqueue(ready, iodev);
         } else {
-            iodev->remainingtime--;
+            iodev->iotime--;
         }
+        printf("\tIO PROCESS NAME: %s, IO TIME REMAINING: %d\n", iodev->name, iodev->iotime);
     }
 }
 
@@ -412,17 +408,16 @@ void runfcfs() {
 
 void runfcfs() {
     if (proc){
-        printf("\tIN FCFS PROCESS NAME: %s, TIME REMAINING: %d\n", proc->name, proc->remainingtime);
-        if (proc->remainingtime-1 == 0){
+        if (proc->remainingtime  == 0){
             printf("PROCESS %s FINISHED AT %d\n", proc->name, CLOCK);
             queue_delete(q_cpu, proc);
             proc = NULL;
+            return;
             // q_cpu = (*q_cpu)->head->next;
         }
         else 
             proc->remainingtime--;
-        
-        printf("%s process exiting fcfs with remaining time %d \n", proc->name, proc->remainingtime);
+        printf("\tIN FCFS PROCESS NAME: %s, TIME REMAINING: %d\n", proc->name, proc->remainingtime);
     }
 }
 
@@ -481,60 +476,46 @@ void run(char *flag){
     int ioservice = 0;
     int prevtime = 0;
     if (strcmp(flag, "-f") == 0) {
-        while (q_cpu || q_io){
+        while (q_cpu->head != NULL || q_io->head != NULL || ready->head != NULL){
             CLOCK++;
             printf("===TICK %d===\n", CLOCK);
             printf("printing ready queue: \n");
             printqueue(ready);
-            printf("\n");
             printf("printing io queue: \n");
             printqueue(q_io);
-
+            printf("\n");
+            printf("RUN READY QUEUE --------------------------------------------\n");
             bool firstload = false;
             // RUN READY QUEUE
              if (ready->head == NULL && q_cpu->head == NULL) {
-                 printf("VIEW: both ready queue and cpu queue empty; leaving function for cpu");
-            }
-            if (!proc) {
-                firstload = true;
-                if (ready->head != NULL) {
-                    proc = ready->head->value;
-                    movetocpu(proc);
-                } else {
-                    if (q_io->head != NULL) {
-                        proc = q_io->head->value;
+                 printf("VIEW: both ready queue and cpu queue empty; leaving function for cpu\n");
+            } else {
+                if (!proc) { 
+                    firstload = true;
+                    if (ready->head != NULL) {
+                        proc = ready->head->value;
+                        if (proc->remainingtime == 0)
+                            firstload = false;
                         movetocpu(proc);
-                    }
+                        
+                    } else {
+                        if (q_io->head != NULL) {
+                            proc = q_io->head->value;
+                            movetocpu(proc);
+                        }
 
-                }
-                if (proc->runtime > 2){
-                    float blockprob = (float)random()/RAND_MAX;
-                    printf("block probability value used: %f\n", blockprob);
-                    blocked = (blockprob < proc->probability);
-                    blockedtime = random() % proc->runtime + MIN_TIME;
-                    printf("block time value used: %d\n", blockedtime);
-                    blockedtime = proc->runtime - blockedtime + 1;
-                }
+                    }
+                    if (proc->remainingtime >= 2){ 
+                        float blockprob = (float)random()/RAND_MAX;
+                        printf("block probability value used: %f\n", blockprob);
+                        blocked = (blockprob < proc->probability);
+                        blockedtime = random() % proc->runtime + MIN_TIME;
+                        printf("block time value used: %d\n", blockedtime);
+                        blockedtime = proc->runtime - blockedtime + 1;
+                    }
+                } 
+                
             }
-            // if (q_cpu->head == NULL && !proc) {
-            //     proc = ready->head->value;
-            //     movetocpu(proc);
-            //     printf("printing cpu queue: \n");
-            //     printqueue(q_cpu);
-            //     proc = q_cpu->head->value;
-            //     firstload = true;
-            //     //printf("process: %s\n", proc->name);
-            //     if (proc) {
-            //         if (proc->runtime > 2){
-            //             float blockprob = (float)random()/RAND_MAX;
-            //             printf("block probability value used: %f\n", blockprob);
-            //             blocked = (blockprob < proc->probability);
-            //             blockedtime = random() % proc->runtime + MIN_TIME;
-            //             printf("block time value used: %d\n", blockedtime);
-            //             blockedtime = proc->runtime - blockedtime + 1;
-            //         }
-            //     }
-            // }
 
             if (firstload == false)
                 runfcfs();
@@ -543,6 +524,7 @@ void run(char *flag){
             if (proc) {
                 if (proc->remainingtime == blockedtime && blocked) {
                     printf("PROCESS BLOCKING\n");
+                    proc->remainingtime--;
                     movetoio(proc);
                     proc = NULL;
                     sametick = true; 
@@ -551,25 +533,41 @@ void run(char *flag){
             }
             
             // RUN IO QUEUE
-
+             printf("RUN I/O QUEUE --------------------------------------------\n");
     
             if ((q_io->head != NULL) && !iodev) {
                 iodev = q_io->head->value;
-                ioservice = (random() % (iodev->runtime - MIN_TIME + 1)) + MIN_TIME;
-                //ioservice = (random() % (IO_MAX_TIME - MIN_TIME + 1)) + MIN_TIME;
-                printf("io service time: %d \n", ioservice);
+                if (iodev->remainingtime == 0) {
+                    ioservice = 1;
+                    printf("remaining time is 0 so io service time = %d \n", ioservice);
+                } else {
+                    printf("remaining run time %d > 30 \n", iodev->remainingtime);
+                    ioservice = (random() % (IO_MAX_TIME - iodev->remainingtime + 1)) + iodev->runtime;
+                    printf("io service time: %d \n", ioservice);
+                }
+                // ioservice = (random() % (IO_MAX_TIME - MIN_TIME + 1)) + MIN_TIME;
+                // ioservice = (random() % (IO_MAX_TIME - MIN_TIME + 1)) + MIN_TIME;
+                // printf("io service time: %d \n", ioservice);
                 prevtime = iodev->remainingtime;
-                iodev->remainingtime = ioservice;
+                iodev->iotime = ioservice;
                 // prevtime = iodev->runtime;
                 // iodev->runtime = ioservice;
             }
+
+            // if (iodev) {
+            //     if (iodev->remainingtime == 0) { 
+            //     ioservice = 1;
+            //     printf("remaining time is 0 so io service time = %d \n", ioservice);
+            //     iodev->iotime = ioservice;
+            //     }
+            // }
 
             if (sametick == false)   
                 runio();
 
             if (iodev) {
-                if (iodev->remainingtime == 0){
-                    iodev->remainingtime = prevtime;
+                if (iodev->iotime == 0){
+                    iodev->iotime = prevtime;
                     // move back to ready queue
                     queue_enqueue(ready, iodev);
                     queue_delete(q_io, iodev); 
@@ -579,21 +577,23 @@ void run(char *flag){
             }
 
             // break;
-        }
+
+
+        }   
 
 
     }
     
     // else runrr();
 
-    // printf("\nSystem:\n");
-    // printf("The wall clock time at which the simulation finished: %d\n", CLOCK);
+    printf("\nSystem:\n");
+    printf("The wall clock time at which the simulation finished: %d\n", CLOCK);
 
-    // printf("\nCPU:\n");
-    // print_cpu_stats();
+    printf("\nCPU:\n");
+    print_cpu_stats();
 
-    // printf("\nIO:\n");
-    // print_io_stats();
+    printf("\nIO:\n");
+    print_io_stats();
     
 }
 
