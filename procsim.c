@@ -76,6 +76,7 @@ int CLOCK = 0;
 char* PROC_HEADERS[] = {"Name", "CPU Time", "When Done", "# Dispatches", "Blocked for I/O", "I/O Time"};
 
 bool debug = false;
+bool debug_random = false;
 
 // QUEUE FUNCTIONS
 QUEUE queue_create(void);
@@ -95,8 +96,9 @@ void runfcfs();                                     // implemented
 void runrr();
 void run(char *flag);                               // implemented
 
-// FILE FUNCTIONS
+// INPUT FUNCTIONS
 void rfile(char *fname);                            // implemented
+void rflag(char *flag);
 
 // STATISTIC FUNCTIONS
 void print_proc_stats(char *name, PROC_STATS stat); // implemented
@@ -112,7 +114,8 @@ void initQueues(void);
 int main(int argc, char *argv[])
 {
     // enable print debug statements
-    debug = true;
+    debug = false;
+    debug_random = false;
 
     // random seed
     (void)srandom(12345);
@@ -127,11 +130,13 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // open the file and load the process queue
-    rfile("file2");
+    // check inputs then open the file and load the process queue
+    rflag(argv[1]);
+    rfile(argv[2]);
 
     // run the sim
-    run("-f");
+    
+    run(argv[1]);
 
     return 0;
 }
@@ -297,49 +302,26 @@ int printqueue(QUEUE queue){
 
 void movetocpu(PROC *p){
     if (debug)  printf("MOVING PROCESSS %s TO CPU\n", p->name);
+    p->stats.dispatches++;
+    cpu_stats.dispatches++;
     queue_enqueue(q_cpu, p);
     queue_delete(ready, p);
 }
 
 void movetoio(PROC *p){
     if (debug) printf("MOVING PROCESSS %s TO IO\n", p->name);
+    p->stats.timesblocked++;
+    io_stats.calls++;
     queue_enqueue(q_io, p);
     queue_delete(q_cpu, p);
 }
 
 
 // RUN FUNCTIONS
-/*
-void runio(){
-    // determine pause and update relevant data entries
-    int pause = (random() % IO_MAX_TIME + MIN_TIME) - 1;
-    io.data.stats.iotime = io.data.stats.iotime + pause;
-    CLOCK += pause;
-    io_stats.calls++;
-    //printf("\nIO SERVICE: %d seconds\n", pause);  
-    io.data.stats.dispatches = io.data.stats.dispatches + 1;
-
-    // check if process needs to continue running then move to cpu
-    movetocpu(&io.data);
-
-    // check if there is an io queue
-    if (io.next){
-        QUEUE * t = io.next;
-        io.data = t->data;
-        io.next = t->next;
-    }
-    else {
-        QUEUE p = {NULL, NULL};
-        io = p;
-    }
-    //printf("IO QUEUE:\n");
-    //printqueue(&io);
-}
-*/
-
 
 
 void runio(){
+    
     if (!iodev && !q_io){
         if (debug) printf("VIEW: both I/O device and I/O queue empty; leaving function for I/O queue\n");
         return;
@@ -347,81 +329,34 @@ void runio(){
 
     if (iodev){
         if (iodev->iotime == 0){
-            printf("PROCESS %s FINISHED AT %d\n", iodev->name, CLOCK);
+            if (debug) printf("PROCESS %s FINISHED AT %d\n", iodev->name, CLOCK);
             queue_delete(q_io, iodev);
             iodev = NULL;
             //queue_enqueue(ready, iodev);
         } else {
             iodev->iotime--;
+            
         }
         if (debug) printf("\tIO PROCESS NAME: %s, IO TIME REMAINING: %d\n", iodev->name, iodev->iotime);
+        io_stats.busy++;
+
     }
 }
 
-/*
-void runfcfs() {
-    QUEUE * q = &ready;
-
-    while (q){
-        q->data.stats.dispatches = q->data.stats.dispatches + 1;
-        //printf("\nFCFS QUEUE:\n");
-        //printf("PROCESS NAME: %s\n", q->data.name);
-
-
-        bool blocked = false;
-        int blockedtime = 0;
-
-        // check if runtime is greater than 2 and determines if process should block
-        if (q->data.runtime > 2){
-            blocked = ((float)random()/RAND_MAX < q->data.probability);
-        }
-
-        // determine blocked time if process blocked
-        if (blocked){
-            blockedtime = random() % q->data.runtime + MIN_TIME;
-            //printf("PROCESS BLOCKED, BT = %d\n", blockedtime);
-        }
-
-        int duration = q->data.runtime - blockedtime;
-        CLOCK += duration;
-        q->data.runtime = q->data.runtime - duration;
-        //printf("RUN FOR %d SECONDS\n", duration);
-        while (duration >= 0) duration--;
-
-        
-        // if process is done, print stats
-        if (q->data.runtime <= 1){
-            print_proc_stats(q->data.name, q->data.stats);
-            q = q->next;
-            continue;
-        }
-
-        // if process blocked, move to io and run io
-        if (blocked) {
-            q->data.stats.timesblocked = q->data.stats.timesblocked + 1;
-            movetoio(&q->data);
-            runio();
-        }
-
-        // continue iterating
-        q = q->next;
-        
-    }
-}
-*/
-
 
 void runfcfs() {
+    if (debug) printf("RUN FCFS ____________\n");
     if (proc){
+        if (proc->remainingtime > 0) proc->remainingtime--;
         if (proc->remainingtime  == 0){
-            printf("PROCESS %s FINISHED AT %d\n", proc->name, CLOCK);
+            if (debug) printf("PROCESS %s FINISHED AT %d\n", proc->name, CLOCK);
+            printf("%-10s %6d     %6d    %6d    %6d    %6d\n", proc->name, 
+                        proc->stats.cputime, CLOCK, proc->stats.dispatches, proc->stats.timesblocked, proc->stats.iotime);
             queue_delete(q_cpu, proc);
             proc = NULL;
             return;
             // q_cpu = (*q_cpu)->head->next;
         }
-        else 
-            proc->remainingtime--;
         if (debug) printf("\tIN FCFS PROCESS NAME: %s, TIME REMAINING: %d\n", proc->name, proc->remainingtime);
     }
 }
@@ -470,8 +405,9 @@ void runfcfs() {
 // }
 
 void run(char *flag){
+    printf("Processes:\n\n");
+    printf("   name     CPU time  when done  cpu disp  i/o disp  i/o time\n");
     if (debug) {
-        printf("Processes:\n");
         for (int i = 0; i < 6; i++){
             printf("%s\t", PROC_HEADERS[i]);
         }
@@ -493,11 +429,13 @@ void run(char *flag){
             if (debug) printf("\n");
             if (debug) printf("RUN READY QUEUE --------------------------------------------\n");
             bool firstload = false;
+            bool skipIO = false;
             // RUN READY QUEUE
              if (ready->head == NULL && q_cpu->head == NULL) {
                  if (debug) printf("VIEW: both ready queue and cpu queue empty; leaving function for cpu\n");
             } else {
-                if (!proc) { 
+                if (!proc) {
+                     
                     firstload = true;
                     if (ready->head != NULL) {
                         proc = ready->head->value;
@@ -512,23 +450,34 @@ void run(char *flag){
                         }
 
                     }
-                    if (proc->remainingtime >= 2){ 
-                        float blockprob = (float)random()/RAND_MAX;
+                    if (proc->remainingtime >= 2){
+                        float r = random();
+                        if (debug_random) printf("%d: %d, f\n", CLOCK, (int)r);
+                        float blockprob = r/RAND_MAX;
                         if (debug) printf("block probability value used: %f\n", blockprob);
                         blocked = (blockprob < proc->probability);
-                        blockedtime = random() % proc->runtime + MIN_TIME;
+                        if (blocked) {
+                            int ran = random();
+                            if (debug_random) printf("%d: %d, %d, i\n", CLOCK, ran, proc->remainingtime);
+                            blockedtime = ran % proc->remainingtime + MIN_TIME;
+                        }
+                        else blockedtime = 0;
+                        blockedtime = proc->remainingtime - blockedtime + 1;
                         if (debug) printf("block time value used: %d\n", blockedtime);
-                        blockedtime = proc->runtime - blockedtime + 1;
+                        
                     }
                 } 
                 
             }
-
-            if (firstload == false)
+            
+            if (firstload == false){
                 runfcfs();
+            }
+            
 
             bool sametick = false;
             if (proc) {
+                
                 if (proc->remainingtime == blockedtime && blocked) {
                     if (debug) printf("PROCESS BLOCKING\n");
                     proc->remainingtime--;
@@ -538,7 +487,7 @@ void run(char *flag){
                     //q_cpu = (*q_cpu)->head->next;
                 }
             }
-            
+
             // RUN IO QUEUE
              if (debug) printf("RUN I/O QUEUE --------------------------------------------\n");
     
@@ -547,12 +496,20 @@ void run(char *flag){
                     iodev = q_io->head->value;
                     if (iodev->remainingtime == 0) {
                         ioservice = 1;
+                        iodev->stats.iotime += ioservice;
                         if (debug) printf("remaining time is 0 so io service time = %d \n", ioservice);
                     } else {
-                        printf("remaining run time %d > 30 \n", iodev->remainingtime);
+                        if (debug) printf("remaining run time %d > 30 \n", iodev->remainingtime);
                         //ioservice = (random() % (IO_MAX_TIME - iodev->remainingtime + 1)) + iodev->runtime;
-                        ioservice = (random() % (IO_MAX_TIME)) + 1;
-                        ioservice--;
+                        int r = random();
+                        if (debug_random) printf("%d: %d, i\n", CLOCK, r);
+                        ioservice = (r % (IO_MAX_TIME)) + 1;
+                        iodev->stats.iotime += ioservice;
+                        if (sametick && proc) {
+                            ioservice--;
+                            io_stats.busy++;
+                        }
+                        else if (sametick) skipIO = true;
                         if (debug) printf("io service time: %d \n", ioservice);
                     }
                     // ioservice = (random() % (IO_MAX_TIME - MIN_TIME + 1)) + MIN_TIME;
@@ -564,6 +521,8 @@ void run(char *flag){
                     // iodev->runtime = ioservice;
                 }
             }
+            if (!iodev) io_stats.idle++;
+
 
             // if (iodev) {
             //     if (iodev->remainingtime == 0) { 
@@ -573,7 +532,7 @@ void run(char *flag){
             //     }
             // }
 
-            if (sametick == false)   
+            if ((iodev) && !skipIO)   
                 runio();
 
             if (iodev) {
@@ -603,7 +562,7 @@ void run(char *flag){
     printf("\nCPU:\n");
     print_cpu_stats();
 
-    printf("\nIO:\n");
+    printf("\nI/O device:\n");
     print_io_stats();
     
 }
@@ -616,37 +575,42 @@ void rfile(char *fname)
     FILE *fp = fopen(fname, "r");
     if (fp == NULL)
     {
-        fprintf(stderr, "Cannot open file %s\n", fname);
+        fprintf(stderr, "%s: No such file or directory\n", fname);
         exit(EXIT_FAILURE);
     }
 
     PROC tmp_proc = {.name = ""};  
 
     int count = 0;
-    while (fscanf(fp, "%s %d %f", tmp_proc.name, &tmp_proc.runtime, &tmp_proc.probability) == 3)
+    
+    int ret = fscanf(fp, "%s %d %f", tmp_proc.name, &tmp_proc.runtime, &tmp_proc.probability);
+
+    while (ret >= 0)
     {
-        // convert probabilty to string so that we can check if there is more than 2 decimal places
-        char buf[10];
-        gcvt(tmp_proc.probability, 4, buf);
 
         // error checking
+        if (ret < 3){
+            fprintf(stderr, "Malformed line %s(%d)\n", fname, count+1);
+            exit(EXIT_FAILURE);
+        }
         if (strlen(tmp_proc.name) > 10)
         {
-            fprintf(stderr, "Name '%s' must be no more than 10 characters\n", tmp_proc.name);
+            fprintf(stderr, "name is too long %s(%d)\n", fname, count+1);
             exit(EXIT_FAILURE);
         }
         else if (tmp_proc.runtime < 1)
         {
-            fprintf(stderr, "The run time must be an integer 1 or more.\n");
+            fprintf(stderr, "runtime is not positive integer %s(%d)\n", fname, count+1);
             exit(EXIT_FAILURE);
         }
-        else if (tmp_proc.probability <= 0 || tmp_proc.probability >= 1 || strlen(buf) > 4)
+        else if (tmp_proc.probability <= 0 || tmp_proc.probability >= 1)
         {
-            fprintf(stderr, "The probability must be a decimal number between 0 and 1 with 2 decimal places.\n");
+            fprintf(stderr, "probability < 0 or > 1 %s(%d)\n", fname, count+1);
             exit(EXIT_FAILURE);
         }
 
         tmp_proc.stats.cputime = tmp_proc.runtime;
+        cpu_stats.busy += tmp_proc.runtime;
         tmp_proc.remainingtime = tmp_proc.runtime;
 
         // allocate actual node
@@ -666,15 +630,23 @@ void rfile(char *fname)
         queue_enqueue(ready, data_ptr);
         count++;
         //printf ("%s %d %.2f\n", data_ptr->name, data_ptr->runtime, data_ptr->probability);
+
+        ret = fscanf(fp, "%s %d %f", tmp_proc.name, &tmp_proc.runtime, &tmp_proc.probability);
     }
     cpu_stats.processes = count;
     if (fp != stdin) fclose (fp); 
-    printf("printing from read: \n");
-    printqueue(ready);
+    if (debug) printf("printing from read: \n");
+    if (debug) printqueue(ready);
     // printf("what\n "); 
     // printqueue(io);
 }
 
+void rflag(char *flag){
+    if (strcmp(flag, "-f") != 0 || strcmp(flag, "-r") == 0){
+        fprintf(stderr, "Usage: ./prsim [-r | -f] file\n");
+        exit(EXIT_FAILURE);
+    }
+}
 
 
 // STATISTIC FUNCTIONS
@@ -698,18 +670,18 @@ void print_proc_stats(char *name, PROC_STATS stats){
 
 void print_cpu_stats(){
     printf("Total time spent busy: %d\n", cpu_stats.busy);
-    printf("Total time spent idle: %d\n", cpu_stats.idle);
+    printf("Total time spent idle: %d\n", CLOCK - cpu_stats.busy);
     printf("CPU utilization: %.2f\n", ((float)cpu_stats.busy/(float)CLOCK));
-    printf("Number of Dispatches: %d\n", cpu_stats.dispatches);
+    printf("Number of dispatches: %d\n", cpu_stats.dispatches);
     printf("Overall throughput: %.2f\n", ((float)cpu_stats.processes)/((float)CLOCK));
 }
 
 void print_io_stats(){
     printf("Total time spent busy: %d\n", io_stats.busy);
-    printf("Total time spent idle: %d\n", io_stats.idle);
-    printf("I/O device utilization: %.2f\n", ((float)io_stats.busy/(float)CLOCK));
-    printf("Number of times I/O was started: %d\n", io_stats.calls);
-    printf("Overall throughput %.2f\n", ((float)io_stats.calls/(float)CLOCK));
+    printf("Total time spent idle: %d\n", CLOCK - io_stats.busy);
+    printf("I/O utilization: %.2f\n", ((float)io_stats.busy/(float)CLOCK));
+    printf("Number of dispatches: %d\n", io_stats.calls);
+    printf("Overall throughput: %.2f\n", ((float)cpu_stats.processes/(io_stats.idle + io_stats.busy)));
 }
 
 
