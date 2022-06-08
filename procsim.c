@@ -536,22 +536,24 @@ void run(char *flag){
              printf("RUN I/O QUEUE --------------------------------------------\n");
     
             if ((q_io->head != NULL) && !iodev) {
-                iodev = q_io->head->value;
-                if (iodev->remainingtime == 0) {
-                    ioservice = 1;
-                    printf("remaining time is 0 so io service time = %d \n", ioservice);
-                } else {
-                    printf("remaining run time %d > 30 \n", iodev->remainingtime);
-                    ioservice = (random() % (IO_MAX_TIME - iodev->remainingtime + 1)) + iodev->runtime;
-                    printf("io service time: %d \n", ioservice);
+                if (sametick == false || firstload == true) {
+                    iodev = q_io->head->value;
+                    if (iodev->remainingtime == 0) {
+                        ioservice = 1;
+                        printf("remaining time is 0 so io service time = %d \n", ioservice);
+                    } else {
+                        printf("remaining run time %d > 30 \n", iodev->remainingtime);
+                        ioservice = (random() % (IO_MAX_TIME - iodev->remainingtime + 1)) + iodev->runtime;
+                        printf("io service time: %d \n", ioservice);
+                    }
+                    // ioservice = (random() % (IO_MAX_TIME - MIN_TIME + 1)) + MIN_TIME;
+                    // ioservice = (random() % (IO_MAX_TIME - MIN_TIME + 1)) + MIN_TIME;
+                    // printf("io service time: %d \n", ioservice);
+                    prevtime = iodev->remainingtime;
+                    iodev->iotime = ioservice;
+                    // prevtime = iodev->runtime;
+                    // iodev->runtime = ioservice;
                 }
-                // ioservice = (random() % (IO_MAX_TIME - MIN_TIME + 1)) + MIN_TIME;
-                // ioservice = (random() % (IO_MAX_TIME - MIN_TIME + 1)) + MIN_TIME;
-                // printf("io service time: %d \n", ioservice);
-                prevtime = iodev->remainingtime;
-                iodev->iotime = ioservice;
-                // prevtime = iodev->runtime;
-                // iodev->runtime = ioservice;
             }
 
             // if (iodev) {
@@ -567,8 +569,8 @@ void run(char *flag){
 
             if (iodev) {
                 if (iodev->iotime == 0){
-                    iodev->iotime = prevtime;
-                    // move back to ready queue
+                    // iodev->iotime = prevtime;
+                    // // move back to ready queue
                     queue_enqueue(ready, iodev);
                     queue_delete(q_io, iodev); 
                     iodev = NULL;
